@@ -53,6 +53,10 @@ def calcular_operacion(profit, minimo):
     else:
         return 'NO_SIGNAL'
 
+@app.get("/")
+def home():
+    return {"message": "API funcionando correctamente"}
+
 @app.get("/predict_get")
 def predict_get(
     fecha: str = Query(..., description="Fecha y hora en formato 'YYYY-MM-DD HH:MM:SS' o ISO"),
