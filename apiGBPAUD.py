@@ -59,6 +59,7 @@ def home():
 
 @app.get("/predict_get")
 def predict_get(
+    symbol: str = Query(..., description="Símbolo de trading, ej: GBPAUD"),
     fecha: str = Query(..., description="Fecha y hora en formato 'YYYY-MM-DD HH:MM:SS' o ISO"),
     precioopen5: float = Query(...),
     precioclose5: float = Query(...),
