@@ -1,98 +1,107 @@
-# uvicorn apiGBPAUD:app --host 0.0.0.0 --port 8000 --reload
-
-import math
-from fastapi import FastAPI, HTTPException
-import torch
-import pandas as pd
-import os
+from fastapi import FastAPI, Query
 from datetime import datetime
+import torch
 import torch.nn as nn
 import pickle
 
 app = FastAPI()
 
-# ==================== MODELO ====================
+input_columns = [
+    'dia_semana', 'hora', 'minuto',
+    "precioopen5", "precioclose5", "precioclose5_dup",
+    "preciohigh5", "preciolow5", "volume5",
+    "precioopen15", "precioclose15", "preciohigh15", "preciolow15", "volume15",
+    "rsi5", "rsi15", "iStochaMain5", "iStochaSign5", "iStochaMain15", "iStochaSign15"
+]
 
-class TradingModel(nn.Module): 
+class TradingModel(nn.Module):
     def __init__(self):
-        super(TradingModel, self).__init__()
-        self.fc1 = nn.Linear(16, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc_tipo = nn.Linear(32, 1)
-        self.fc_profit = nn.Linear(32, 1)
-        self.relu = nn.ReLU()
-        self.tanh = nn.Tanh()
-    
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(20, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
+        )
+
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        tipo_out = self.tanh(self.fc_tipo(x))   # [-1, 1]
-        profit_out = self.fc_profit(x)
-        return tipo_out, profit_out
+        return self.net(x)
 
-
-# Cargar modelo entrenado
 model_path = "Trading_Model/trading_model_GBPAUD.pth"
 model = TradingModel()
-model.load_state_dict(torch.load(model_path, map_location="cpu"))
+model.load_state_dict(torch.load(model_path))
 model.eval()
 
-# ==================== CONFIGURACIÓN ====================
-
-symbol = "GBPAUD"
 with open("Trading_Model/min_max_GBPAUD.pkl", "rb") as f:
-    min_max_dict = pickle.load(f)
+    min_max = pickle.load(f)
 
-def normalize(value, min_val, max_val):
-    return (value - min_val) / (max_val - min_val) if max_val != min_val else 0
+min_profit = min_max["min_profit"]
+max_profit = min_max["max_profit"]
 
-# ==================== ENDPOINT ====================
+MINIMO_GLOBAL = 0.0005
+MINUTO_MAX = 55.0
+HORA_MAX = 23.0
+DIA_SEMANA_MAX = 6.0
 
-@app.get("/predict")
-def predict(
-    o5: float, c5: float, h5: float, l5: float, v5: float,
-    o15: float, c15: float, h15: float, l15: float, v15: float,
-    r5: float, r15: float, m5: float, s5: float, m15: float, s15: float
-):
-    data = {
-    "precioopen5": o5, "precioclose5": c5, "preciohigh5": h5, "preciolow5": l5, "volume5": v5,
-    "precioopen15": o15, "precioclose15": c15, "preciohigh15": h15, "preciolow15": l15, "volume15": v15,
-    "rsi5": r5, "rsi15": r15,
-    "iStochaMain5": m5, "iStochaSign5": s5,
-    "iStochaMain15": m15, "iStochaSign15": s15
-    }
+def denormalize(value, min_val, max_val):
+    return value * (max_val - min_val) + min_val
 
-    # Normalizar usando el mismo min_max_dict cargado desde archivo
-    normalized = []
-    for key in data:
-        min_val, max_val = min_max_dict[key]
-        normalized.append(normalize(data[key], min_val, max_val))
-
-    input_tensor = torch.tensor([normalized], dtype=torch.float32)
-
-    with torch.no_grad():
-        tipo_pred_tensor, profit_pred_tensor = model(input_tensor)
-        tipo_pred = tipo_pred_tensor.item()
-        profit_pred = profit_pred_tensor.item()
-
-    # Desnormalizar profit
-    min_profit, max_profit = min_max_dict['profit']
-    profit_pred = profit_pred * (max_profit - min_profit) + min_profit
-
-    if tipo_pred >= 0.1:
-        prediction = "BUY"
-    elif tipo_pred <= -0.1:
-        prediction = "SELL"
+def calcular_operacion(profit, minimo):
+    if abs(profit) > minimo:
+        return 'BUY' if profit > 0 else 'SELL'
     else:
-        prediction = "NADA"
+        return 'NO_SIGNAL'
 
-    if not math.isfinite(profit_pred):
-        profit_pred = 0.0
+@app.get("/predict_get")
+def predict_get(
+    fecha: str = Query(..., description="Fecha y hora en formato 'YYYY-MM-DD HH:MM:SS' o ISO"),
+    precioopen5: float = Query(...),
+    precioclose5: float = Query(...),
+    precioclose5_dup: float = Query(...),
+    preciohigh5: float = Query(...),
+    preciolow5: float = Query(...),
+    volume5: float = Query(...),
+    precioopen15: float = Query(...),
+    precioclose15: float = Query(...),
+    preciohigh15: float = Query(...),
+    preciolow15: float = Query(...),
+    volume15: float = Query(...),
+    rsi5: float = Query(...),
+    rsi15: float = Query(...),
+    iStochaMain5: float = Query(...),
+    iStochaSign5: float = Query(...),
+    iStochaMain15: float = Query(...),
+    iStochaSign15: float = Query(...)
+):
+    # Convertir fecha a datetime
+    try:
+        dt = datetime.fromisoformat(fecha)
+    except ValueError:
+        dt = datetime.strptime(fecha, "%Y-%m-%d %H:%M:%S")
+
+    # Extraer y normalizar
+    dia_semana = dt.weekday() / DIA_SEMANA_MAX
+    hora = dt.hour / HORA_MAX
+    minuto = dt.minute / MINUTO_MAX
+
+    features = [
+        dia_semana, hora, minuto,
+        precioopen5, precioclose5, precioclose5_dup,
+        preciohigh5, preciolow5, volume5,
+        precioopen15, precioclose15, preciohigh15, preciolow15, volume15,
+        rsi5, rsi15, iStochaMain5, iStochaSign5, iStochaMain15, iStochaSign15
+    ]
+
+    x = torch.tensor([features], dtype=torch.float32)
+    with torch.no_grad():
+        raw_output = model(x).item()
+
+    profit = denormalize(raw_output, min_profit, max_profit)
+    tipo = calcular_operacion(profit, MINIMO_GLOBAL)
 
     return {
-        "symbol": symbol,
-        "timestamp": datetime.now().isoformat(),
-        "prediction": prediction,
-        "profit": round(profit_pred, 6) if prediction != "NADA" else None
+        "raw_output": raw_output,
+        "profit_prediction": profit,
+        "tipo_operacion": tipo
     }
-
