@@ -3,6 +3,7 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import pickle
+import os 
 
 app = FastAPI()
 
@@ -28,12 +29,15 @@ class TradingModel(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-model_path = "Trading_Model/trading_model_GBPAUD.pth"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+model_path = os.path.join(BASE_DIR, "Trading_Model", "trading_model_GBPAUD.pth")
+min_max_path = os.path.join(BASE_DIR, "Trading_Model", "min_max_GBPAUD.pkl")
 model = TradingModel()
 model.load_state_dict(torch.load(model_path))
-model.eval()
+model.eval()  # poner en modo evaluación
 
-with open("Trading_Model/min_max_GBPAUD.pkl", "rb") as f:
+with open(min_max_path, "rb") as f:
     min_max = pickle.load(f)
 
 min_profit = min_max["min_profit"]
@@ -82,6 +86,8 @@ def predict_get(
     iStochaMain15: float = Query(..., alias="m15"),
     iStochaSign15: float = Query(..., alias="s15"),
 ):
+    print(f"Petición recibida: symbol={symbol}, fecha={fecha}")
+
     # Convertir fecha a datetime
     try:
         dt = datetime.fromisoformat(fecha)
@@ -107,6 +113,8 @@ def predict_get(
 
     profit = denormalize(raw_output, min_profit, max_profit)
     tipo = calcular_operacion(profit, MINIMO_GLOBAL)
+
+    print(f"Respuesta modelo: raw_output={raw_output}, profit={profit}, tipo={tipo}")
 
     return {
         "raw_output": raw_output,
