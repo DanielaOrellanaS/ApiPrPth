@@ -110,12 +110,16 @@ def predict_get(
     x = torch.tensor([features], dtype=torch.float32)
     with torch.no_grad():
         raw_output = model(x).item()
-
+    print(f"🧠 raw_output (modelo): {raw_output}")
     profit = denormalize(raw_output, min_profit, max_profit)
     profit_normalized = (profit - min_profit) / (max_profit - min_profit)
     tipo = calcular_operacion(profit_normalized, MINIMO_GLOBAL)
 
-    print(f"Respuesta modelo: raw_output={raw_output}, profit={profit}, tipo={tipo}")
+    print(f"Respuesta modelo: raw_output={raw_output}, profit={profit}, tipo={tipo}") 
+
+    print(f"🧠 raw_output (modelo): {raw_output}")
+    print(f"💰 profit denormalizado: {profit}")
+    print(f"📊 profit normalizado (enviado): {profit_normalized}")
 
     return {
         "profit_prediction": profit_normalized,
