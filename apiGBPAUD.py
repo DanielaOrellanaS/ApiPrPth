@@ -112,12 +112,12 @@ def predict_get(
         raw_output = model(x).item()
 
     profit = denormalize(raw_output, min_profit, max_profit)
-    tipo = calcular_operacion(profit, MINIMO_GLOBAL)
+    profit_normalized = (profit - min_profit) / (max_profit - min_profit)
+    tipo = calcular_operacion(profit_normalized, MINIMO_GLOBAL)
 
     print(f"Respuesta modelo: raw_output={raw_output}, profit={profit}, tipo={tipo}")
 
     return {
-        "raw_output": raw_output,
-        "profit_prediction": profit,
+        "profit_prediction": profit_normalized,
         "tipo_operacion": tipo
     }
