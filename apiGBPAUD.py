@@ -59,25 +59,28 @@ def home():
 
 @app.get("/predict_get")
 def predict_get(
-    symbol: str = Query(..., description="Símbolo de trading, ej: GBPAUD"),
-    fecha: str = Query(..., description="Fecha y hora en formato 'YYYY-MM-DD HH:MM:SS' o ISO"),
-    precioopen5: float = Query(...),
-    precioclose5: float = Query(...),
-    precioclose5_dup: float = Query(...),
-    preciohigh5: float = Query(...),
-    preciolow5: float = Query(...),
-    volume5: float = Query(...),
-    precioopen15: float = Query(...),
-    precioclose15: float = Query(...),
-    preciohigh15: float = Query(...),
-    preciolow15: float = Query(...),
-    volume15: float = Query(...),
-    rsi5: float = Query(...),
-    rsi15: float = Query(...),
-    iStochaMain5: float = Query(...),
-    iStochaSign5: float = Query(...),
-    iStochaMain15: float = Query(...),
-    iStochaSign15: float = Query(...)
+    symbol: str = Query(...),
+    fecha: str = Query(...),
+    precioopen5: float = Query(..., alias="o5"),
+    precioclose5: float = Query(..., alias="c5"),
+    precioclose5_dup: float = Query(..., alias="c5d"),
+    preciohigh5: float = Query(..., alias="h5"),
+    preciolow5: float = Query(..., alias="l5"),
+    volume5: float = Query(..., alias="v5"),
+
+    precioopen15: float = Query(..., alias="o15"),
+    precioclose15: float = Query(..., alias="c15"),
+    preciohigh15: float = Query(..., alias="h15"),
+    preciolow15: float = Query(..., alias="l15"),
+    volume15: float = Query(..., alias="v15"),
+
+    rsi5: float = Query(..., alias="r5"),
+    rsi15: float = Query(..., alias="r15"),
+
+    iStochaMain5: float = Query(..., alias="m5"),
+    iStochaSign5: float = Query(..., alias="s5"),
+    iStochaMain15: float = Query(..., alias="m15"),
+    iStochaSign15: float = Query(..., alias="s15"),
 ):
     # Convertir fecha a datetime
     try:
