@@ -6,8 +6,15 @@ import pickle
 from fastapi import FastAPI, Request
 import pandas as pd
 from datetime import datetime
+from fastapi.responses import FileResponse
+import pytz
+import os
 
 app = FastAPI()
+PREDICTION_FOLDER = "Predictions_Files"
+
+if not os.path.exists(PREDICTION_FOLDER):
+    os.makedirs(PREDICTION_FOLDER)
 
 # ========= Normalización =========
 def normalize(value, min_val, max_val):
@@ -136,13 +143,83 @@ def map_get_params_to_registro(params):
     print("Registro recibido:", registro)
     return registro
 
+def obtener_nombre_archivo(symbol: str, fecha: datetime) -> str:
+    zona_guayaquil = pytz.timezone("America/Guayaquil")
+    fecha_local = fecha.astimezone(zona_guayaquil)
+
+    # Si es después de las 5 p. m., fecha de corte es hoy, si no, es ayer
+    if fecha_local.hour >= 17:
+        fecha_corte = fecha_local.date()
+    else:
+        fecha_corte = (fecha_local - pd.Timedelta(days=1)).date()
+
+    return f"registros_{symbol}_{fecha_corte}.xlsx"
+
+def eliminar_archivo_diario(symbol: str):
+    zona_guayaquil = pytz.timezone("America/Guayaquil")
+    ahora = datetime.now(zona_guayaquil)
+    if ahora.hour == 17 and ahora.minute == 0:
+        nombre_archivo = f"registros_{symbol}_{ahora.date()}.xlsx"
+        ruta_completa = os.path.join(PREDICTION_FOLDER, nombre_archivo)
+        if os.path.exists(ruta_completa):
+            os.remove(ruta_completa)
+            print(f"Archivo {ruta_completa} eliminado automáticamente a las 5 p. m.")
+
+def guardar_registro(symbol: str, fecha: datetime, registro: dict, resultado: dict):
+    eliminar_archivo_diario(symbol)
+    nombre_archivo = obtener_nombre_archivo(symbol, fecha)
+    ruta_completa = os.path.join(PREDICTION_FOLDER, nombre_archivo)
+    # Añadir resultado al registro
+    registro_completo = registro.copy()
+    registro_completo.update(resultado)
+    registro_completo["symbol"] = symbol
+    registro_completo["timestamp"] = fecha.strftime("%Y-%m-%d %H:%M:%S")
+
+    df_nuevo = pd.DataFrame([registro_completo])
+
+    if os.path.exists(ruta_completa):
+        df_existente = pd.read_excel(ruta_completa)
+        df_final = pd.concat([df_existente, df_nuevo], ignore_index=True)
+    else:
+        df_final = df_nuevo
+
+    df_final.to_excel(ruta_completa, index=False)
+    print(f"Registro guardado en {ruta_completa}")
+
+
 @app.get("/predict_get_with_file")
 async def predict_get(request: Request):
     params = request.query_params
     print("Parámetros GET recibidos:", dict(params))
+    symbol = params["symbol"]
     registro = map_get_params_to_registro(params)
     resultado = predecir_registro(registro)  
+    fecha = datetime.strptime(registro["fecha"], "%Y-%m-%d %H:%M:%S")
+    guardar_registro(symbol, fecha, registro, resultado)
     print("Resultado predicción:", resultado)
     return resultado
 
+@app.get("/download_files/")
+def descargar_archivo(symbol: str):
+    try:
+        archivos = os.listdir(PREDICTION_FOLDER)
+        archivos_filtrados = [f for f in archivos if symbol in f and f.endswith(".xlsx")]
 
+        if not archivos_filtrados:
+            return {"error": f"No se encontró ningún archivo para el símbolo {symbol} en {PREDICTION_FOLDER}"}
+
+        # Ordenar por fecha de modificación (más reciente al final)
+        archivos_filtrados.sort(key=lambda x: os.path.getmtime(os.path.join(PREDICTION_FOLDER, x)))
+
+        archivo_mas_reciente = archivos_filtrados[-1]
+        ruta_completa = os.path.join(PREDICTION_FOLDER, archivo_mas_reciente)
+        print(f"Archivo más reciente encontrado: {ruta_completa}")
+
+        return FileResponse(
+            path=ruta_completa,
+            filename=archivo_mas_reciente,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        return {"error": str(e)}
