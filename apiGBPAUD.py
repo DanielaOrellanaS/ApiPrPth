@@ -41,7 +41,7 @@ def denormalize(val, min_val, max_val):
 def calcular_operacion(profit, minimo=0.0004):
     if abs(profit) > minimo:
         return "BUY" if profit > 0 else "SELL"
-    return "NO_SIGNAL"
+    return "NADA"
 
 @app.get("/predict")
 def predict(
