@@ -123,9 +123,9 @@ def predict(
         df.to_excel(file_path, index=False)
 
         return {
-            "input_normalizado": input_data,
-            "profit": profit,
-            "tipo_operacion": tipo
+            #"input_normalizado": input_data,
+            "valor_profit": profit,
+            "RESULTADO": tipo
         }
 
     except Exception as e:
