@@ -1,372 +1,139 @@
 # uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
-import torch
-import pandas as pd
-import os
-import re
+from fastapi import FastAPI, Query
 from datetime import datetime
-import asyncio
-from asyncio import Lock
-import io
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-import torch.nn as nn   
-from torch.utils.data import TensorDataset, DataLoader
-from googleapiclient.http import MediaFileUpload
-
-def get_credentials_path():
-    render_secret_path = '/etc/secrets/credentials.json'
-    local_path = 'credentials.json'
-    
-    if os.path.exists(render_secret_path):
-        return render_secret_path
-    elif os.path.exists(local_path):
-        return local_path
-    else:
-        raise FileNotFoundError("No se encontró el archivo credentials.json ni en /etc/secrets/ ni en el directorio actual")
-
-SERVICE_ACCOUNT_FILE = get_credentials_path()
-FOLDER_ID = '1PtmUJhIpBVpvQ_FHhmxPJUkzj0wAtUQp'
-
-creds = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE,
-    scopes=['https://www.googleapis.com/auth/drive']
-)
-service = build('drive', 'v3', credentials=creds)
+import torch
+import torch.nn as nn
+import pickle
+import os
+import pandas as pd
 
 app = FastAPI()
 
-# ======================= MODELOS Y CONFIGURACIÓN ==========================
-
-class TradingModel18(torch.nn.Module):
-    def __init__(self):
-        super(TradingModel18, self).__init__()
-        self.fc1 = torch.nn.Linear(18, 64)
-        self.fc2 = torch.nn.Linear(64, 32)
-        self.fc3 = torch.nn.Linear(32, 1)
-        self.relu = torch.nn.ReLU()
-    
-    def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = torch.tanh(self.fc3(x))
-        return x
-
-class TradingModel19(torch.nn.Module):
-    def __init__(self):
-        super(TradingModel19, self).__init__()
-        self.fc1 = torch.nn.Linear(19, 64)
-        self.fc2 = torch.nn.Linear(64, 32)
-        self.fc3 = torch.nn.Linear(32, 1)
-        self.relu = torch.nn.ReLU()
-    
-    def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = torch.tanh(self.fc3(x))
-        return x
-
-forex_symbols = ["EURUSD", "GBPAUD", "BTCUSD", "GBPUSD", "AUDUSD"]
-index_symbols = ["US30", "GER40", "NAS100"]
-all_symbols = forex_symbols + index_symbols
-# Crear un Lock por cada símbolo para evitar conflictos de escritura
-file_locks = {symbol: Lock() for symbol in all_symbols}
-
-models = {}
-locks = {}
-thresholds = {}
-
-# Modelo 18 features
-for sym in forex_symbols:
-    model = TradingModel18()
-    model.load_state_dict(torch.load(f'Trading_Model/trading_model_{sym}.pth', map_location='cpu'))
-    model.eval()
-    models[sym] = model
-    locks[sym] = asyncio.Lock()
-
-# Modelo 19 features
-for sym in index_symbols:
-    model = TradingModel19()
-    model.load_state_dict(torch.load(f'Trading_Model/trading_model_{sym}.pth', map_location='cpu'))
-    model.eval()
-    models[sym] = model
-    locks[sym] = asyncio.Lock()
-
-# Thresholds
-thresholds.update({
-    "EURUSD": 0.0005,
-    "GBPUSD": 0.0005,
-    "AUDUSD": 0.0005,
-    "GBPAUD": 0.001,
-    "BTCUSD": 500,
-    "US30": 50,
-    "GER40": 70,
-    "NAS100": 50,
-})
-
-min_max_dict = {
-    "o5": (1.04931, 1.05013), "c5": (1.04931, 1.05013), "h5": (1.04931, 1.05013), "l5": (1.04931, 1.05013), "v5": (610, 995),
-    "o15": (1.04931, 1.05013), "c15": (1.04931, 1.05013), "h15": (1.04931, 1.05013), "l15": (1.04931, 1.05013), "v15": (1461, 3005),
-    "r5": (0, 100), "r15": (0, 100),
-    "m5": (0, 100), "s5": (0, 100), "m15": (0, 100), "s15": (0, 100),
-    "fill": (0, 1),
-    "dif": (0, 100) 
+# ========= Configuración por símbolo =========
+SYMBOL_CONFIG = {
+    "GBPAUD": {
+        "model_path": "Trading_Model/trading_model_GBPAUD.pth",
+        "minmax_path": "Trading_Model/min_max_GBPAUD.pkl",
+        "min_profit": 0.0004
+    },
+    "AUDUSD": {
+        "model_path": "Trading_Model/trading_model_AUDUSD.pth",
+        "minmax_path": "Trading_Model/min_max_AUDUSD.pkl",
+        "min_profit": 0.0005
+    }
+    # Puedes seguir agregando más símbolos aquí
 }
 
-
-def normalize(value, min_val, max_val):
-    return (value - min_val) / (max_val - min_val) if max_val != min_val else 0
-
-# ======================= ENDPOINTS ==========================
-
-@app.get("/")
-def home():
-    return {"message": "API combinada funcionando correctamente"}
-
-@app.get("/predict")
-async def predict(
-    symbol: str,
-    o5: float, c5: float, h5: float, l5: float, v5: float,
-    o15: float, c15: float, h15: float, l15: float, v15: float,
-    r5: float, r15: float, m5: float, s5: float, m15: float, s15: float,
-    fill: int = 0
-):
-    all_symbols = list(models.keys())
-    if symbol not in all_symbols:
-        raise HTTPException(status_code=400, detail=f"Modelo no disponible para {symbol}")
-
-    is_index = symbol in ["US30", "GER40", "NAS100"]
-    model = models[symbol]
-
-    data = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "symbol": symbol,
-        "o5": o5, "c5": c5, "h5": h5, "l5": l5, "v5": v5,
-        "o15": o15, "c15": c15, "h15": h15, "l15": l15, "v15": v15,
-        "r5": r5, "r15": r15, "m5": m5, "s5": s5, "m15": m15, "s15": s15,
-        "fill": fill,
-    }
-
-    df = pd.DataFrame([data])
-    df["dif"] = abs(df["h5"] - df["l5"])
-
-    if df["dif"].values[0] <= thresholds[symbol]:
-        prediction = "NADA" 
-    else:
-        for col in min_max_dict:
-            df[col] = df[col].apply(lambda x: normalize(x, *min_max_dict[col]))
-
-        input_cols = list(min_max_dict.keys())
-        input_tensor = torch.tensor(df[input_cols].values, dtype=torch.float32)
-
-        raw_pred = model(input_tensor).item()
-
-        if raw_pred >= 0.1:
-            prediction = "BUY"
-        elif raw_pred <= -0.1:
-            prediction = "SELL"
-        else:
-            prediction = "NADA"
-
-    df["prediction"] = prediction
-
-    pred_path = os.path.join(os.getcwd(), "Predictions_Files")
-    os.makedirs(pred_path, exist_ok=True)
-    file_name = os.path.join(pred_path, f"save_predictions_{symbol}.xlsx")
-
-    async with file_locks[symbol]:
-        try:
-            if os.path.exists(file_name):
-                existing_df = pd.read_excel(file_name)
-                updated_df = pd.concat([existing_df, df], ignore_index=True)
-            else:
-                updated_df = df
-            updated_df.to_excel(file_name, index=False)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error guardando predicción: {str(e)}")
-
-    return {"symbol": symbol, "prediction": prediction}
-
-@app.get("/download/{symbol}")
-def download(symbol: str):
-    path = os.path.join("Predictions_Files", f"save_predictions_{symbol}.xlsx")
-    if os.path.exists(path):
-        return FileResponse(path, filename=os.path.basename(path), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    return {"error": "Archivo no encontrado"}
-
-@app.post("/upload/{symbol}")
-def upload_prediction_file(symbol: str):
-    try:
-        # Ruta donde se guarda el archivo en Render
-        file_path = os.path.join("Predictions_Files", f"save_predictions_{symbol}.xlsx")
-        
-        if not os.path.exists(file_path):
-            return {"status": "error", "message": f"No se encontró el archivo {file_path}"}
-        
-        # Nombre final en Google Drive
-        fecha_actual = datetime.now().strftime("%Y-%m-%d")
-        file_name = f"save_predictions_{symbol}.xlsx"
-        
-        # Crear objeto de subida
-        media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-        # Subir a Google Drive
-        file_metadata = {
-            'name': file_name,
-            'parents': [FOLDER_ID]
-        }
-        uploaded_file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id'
-        ).execute()
-
-        return {
-            "status": "success",
-            "message": f"Archivo {file_name} subido correctamente a Drive",
-            "file_id": uploaded_file.get("id")
-        }
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-def find_drive_file(symbol: str, target_date: str):
-    query = f"'{FOLDER_ID}' in parents and name contains 'TX_{symbol}_{target_date}'"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    files = results.get('files', [])
-    return files[0] if files else None
-
-def download_drive_file(file_id: str, destination_path: str):
-    request = service.files().get_media(fileId=file_id)
-    fh = io.FileIO(destination_path, 'wb')
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        status, done = downloader.next_chunk()
-
-class TradingMLP(nn.Module):
-    def __init__(self, input_dim):
-        super(TradingMLP, self).__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(input_dim, 64),
+# ========= Modelo base =========
+class TradingModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(20, 64),
             nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Tanh()
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
         )
 
     def forward(self, x):
-        return self.fc(x)
+        return self.net(x)
 
-def get_model_path(symbol: str) -> str:
-    base_path = r"C:\Users\user\OneDrive\Documentos\Trading\ModelPth\apiPth\Trading_Model"
-    return os.path.join(base_path, f"trading_model_{symbol}.pth")
+# ========= Funciones auxiliares =========
+def normalize(val, min_val, max_val):
+    return (val - min_val) / (max_val - min_val)
 
-def normalize_inputs(df, feature_cols):
-    # Aquí usa tu método de normalización actual, por ahora lo mantengo como min-max 0-1
-    for col in feature_cols:
-        min_val = df[col].min()
-        max_val = df[col].max()
-        if min_val != max_val:
-            df[col] = (df[col] - min_val) / (max_val - min_val)
-        else:
-            df[col] = 0
-    return df
+def denormalize(val, min_val, max_val):
+    return val * (max_val - min_val) + min_val
 
-@app.get("/feedback/{symbol}")
-def feedback(symbol: str):
-    today = datetime.now().strftime('%Y-%m-%d')
-    pred_filename = f"save_predictions_{symbol}.xlsx"
-    real_filename = f"Data_{symbol}_{today}.xlsx"
+def calcular_operacion(profit, minimo):
+    if abs(profit) > minimo:
+        return "BUY" if profit > 0 else "SELL"
+    return "NADA"
 
-    # Función auxiliar para descargar desde Drive
-    def download_from_drive(file_name: str, local_path: str):
-        query = f"'{FOLDER_ID}' in parents and name = '{file_name}'"
-        results = service.files().list(q=query, fields="files(id, name)").execute()
-        files = results.get('files', [])
-        if not files:
-            raise HTTPException(status_code=404, detail=f"No se encontró {file_name} en Google Drive")
-        file_id = files[0]['id']
-        request = service.files().get_media(fileId=file_id)
-        fh = io.FileIO(local_path, 'wb')
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-
-    # Descargar ambos archivos
-    pred_local = f"temp_{pred_filename}"
-    real_local = f"temp_{real_filename}"
-    download_from_drive(pred_filename, pred_local)
-    download_from_drive(real_filename, real_local)
-
-    # Leer archivos
+# ========= Endpoint principal =========
+@app.get("/predict")
+def predict(
+    symbol: str,
+    fecha: str,
+    o5: float = Query(...), c5: float = Query(...),
+    h5: float = Query(...), l5: float = Query(...), v5: float = Query(...),
+    o15: float = Query(...), c15: float = Query(...),
+    h15: float = Query(...), l15: float = Query(...), v15: float = Query(...),
+    r5: float = Query(...), r15: float = Query(...),
+    m5: float = Query(...), s5: float = Query(...),
+    m15: float = Query(...), s15: float = Query(...)
+):
     try:
-        pred_df = pd.read_excel(pred_local)
-        real_df = pd.read_excel(real_local)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al leer archivos: {e}")
+        if symbol not in SYMBOL_CONFIG:
+            return {"error": f"Símbolo '{symbol}' no está soportado."}
 
-    # Preparar y comparar
-    real_df = real_df.rename(columns={"simbolo": "symbol"})
-    merged = pd.merge(pred_df, real_df, on="symbol", suffixes=("_pred", "_real"))
+        config = SYMBOL_CONFIG[symbol]
 
-    if 'tipo' not in merged.columns or 'prediction' not in merged.columns:
-        raise HTTPException(status_code=400, detail="Faltan columnas clave para feedback.")
+        # Cargar modelo
+        model = TradingModel()
+        model.load_state_dict(torch.load(config["model_path"]))
+        model.eval()
 
-    merged = merged.dropna(subset=['prediction', 'tipo'])
-    merged = merged[merged['prediction'].round(1) != merged['tipo'].round(1)]
+        # Cargar min/max
+        with open(config["minmax_path"], "rb") as f:
+            min_max = pickle.load(f)
 
-    if merged.empty:
-        return {
-            "symbol": symbol,
-            "date": today,
-            "total_predictions": len(pred_df),
-            "incorrect_predictions": 0,
-            "accuracy": 100.0,
-            "retrained": False
+        # Procesar fecha
+        dt = datetime.fromisoformat(fecha)
+        dia_semana = dt.weekday() / 6.0
+        hora = dt.hour / 23.0
+        minuto = dt.minute / 55.0
+
+        # Normalizar inputs
+        input_data = [
+            dia_semana, hora, minuto,
+            normalize(o5, min_max["min_precio5"], min_max["max_precio5"]),
+            normalize(c5, min_max["min_precio5"], min_max["max_precio5"]),
+            normalize(c5, min_max["min_precio5"], min_max["max_precio5"]),
+            normalize(h5, min_max["min_precio5"], min_max["max_precio5"]),
+            normalize(l5, min_max["min_precio5"], min_max["max_precio5"]),
+            normalize(v5, min_max["min_volume5"], min_max["max_volume5"]),
+            normalize(o15, min_max["min_precio15"], min_max["max_precio15"]),
+            normalize(c15, min_max["min_precio15"], min_max["max_precio15"]),
+            normalize(h15, min_max["min_precio15"], min_max["max_precio15"]),
+            normalize(l15, min_max["min_precio15"], min_max["max_precio15"]),
+            normalize(v15, min_max["min_volume15"], min_max["max_volume15"]),
+            r5 / 100.0, r15 / 100.0,
+            m5 / 100.0, s5 / 100.0,
+            m15 / 100.0, s15 / 100.0
+        ]
+
+        input_tensor = torch.tensor(input_data, dtype=torch.float32).unsqueeze(0)
+        raw_output = model(input_tensor).item()
+        profit = denormalize(raw_output, min_max["min_profit"], min_max["max_profit"])
+        tipo = calcular_operacion(profit, config["min_profit"])
+
+        # Guardar predicción
+        save_dir = "Predicciones"
+        os.makedirs(save_dir, exist_ok=True)
+        file_path = os.path.join(save_dir, f"save_predictions_{symbol}.xlsx")
+
+        row = {
+            "timestamp": fecha, "symbol": symbol, "tipo": tipo, "profit": profit,
+            "precioopen5": o5, "precioclose5": c5, "preciohigh5": h5, "preciolow5": l5, "volume5": v5,
+            "precioopen15": o15, "precioclose15": c15, "preciohigh15": h15, "preciolow15": l15, "volume15": v15,
+            "rsi5": r5, "rsi15": r15,
+            "iStochaMain5": m5, "iStochaSign5": s5, "iStochaMain15": m15, "iStochaSign15": s15
         }
 
-    # Reentrenamiento
-    feature_cols = [col for col in pred_df.columns if col not in ['timestamp', 'symbol', 'prediction', 'dif']]
-    merged = normalize_inputs(merged, feature_cols)
+        if os.path.exists(file_path):
+            df = pd.read_excel(file_path)
+            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+        else:
+            df = pd.DataFrame([row])
+        df.to_excel(file_path, index=False)
 
-    X = merged[feature_cols].values.astype('float32')
-    y = merged['tipo'].values.astype('float32').reshape(-1, 1)
+        return {
+            "valor_profit": profit,
+            "RESULTADO": tipo
+        }
 
-    model_path = get_model_path(symbol)
-    model = TradingMLP(input_dim=len(feature_cols))
-    model.load_state_dict(torch.load(model_path))
-    model.train()
-
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-    dataset = TensorDataset(torch.tensor(X), torch.tensor(y))
-    loader = DataLoader(dataset, batch_size=16, shuffle=True)
-
-    for epoch in range(10):
-        for xb, yb in loader:
-            optimizer.zero_grad()
-            pred = model(xb)
-            loss = criterion(pred, yb)
-            loss.backward()
-            optimizer.step()
-
-    torch.save(model.state_dict(), model_path)
-
-    # Limpiar temporales
-    os.remove(pred_local)
-    os.remove(real_local)
-
-    return {
-        "symbol": symbol,
-        "date": today,
-        "total_predictions": len(pred_df),
-        "incorrect_predictions": len(merged),
-        "accuracy": round(100 * (1 - len(merged) / len(pred_df)), 2),
-        "retrained": True
-    }
+    except Exception as e:
+        return {"error": str(e)}
