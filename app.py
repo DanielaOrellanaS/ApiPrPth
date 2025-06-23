@@ -67,7 +67,7 @@ def predict(
 ):
     try:
         if symbol not in SYMBOL_CONFIG:
-            return {"error": f"Símbolo '{symbol}' no está soportado."}
+            return {"error": f"Símbolo '{symbol}' no encontrado"}
 
         config = SYMBOL_CONFIG[symbol]
 
