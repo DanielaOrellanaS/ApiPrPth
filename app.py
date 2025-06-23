@@ -21,8 +21,17 @@ SYMBOL_CONFIG = {
         "model_path": "Trading_Model/trading_model_AUDUSD.pth",
         "minmax_path": "Trading_Model/min_max_AUDUSD.pkl",
         "min_profit": 0.0005
+    },
+    "EURUSD": {
+        "model_path": "Trading_Model/trading_model_EURUSD.pth",
+        "minmax_path": "Trading_Model/min_max_EURUSD.pkl",
+        "min_profit": 0.0005
+    },
+    "GBPUSD": {
+        "model_path": "Trading_Model/trading_model_GBPUSD.pth",
+        "minmax_path": "Trading_Model/min_max_GBPUSD.pkl",
+        "min_profit": 0.0005
     }
-    # Puedes seguir agregando más símbolos aquí
 }
 
 # ========= Modelo base =========
