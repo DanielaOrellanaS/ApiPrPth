@@ -15,7 +15,7 @@ SYMBOL_CONFIG = {
     "GBPAUD": {
         "model_path": "Trading_Model/trading_model_GBPAUD.pth",
         "minmax_path": "Trading_Model/min_max_GBPAUD.pkl",
-        "min_profit": 0.0004
+        "min_profit": 0.0005
     },
     "AUDUSD": {
         "model_path": "Trading_Model/trading_model_AUDUSD.pth",
