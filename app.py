@@ -132,27 +132,7 @@ def predict(
         raw_output = model(input_tensor).item()
         profit = denormalize(raw_output, min_max["min_profit"], min_max["max_profit"])
         tipo = calcular_operacion(profit, config["min_profit"])
-
-        # Guardar predicción
-        save_dir = "Predicciones"
-        os.makedirs(save_dir, exist_ok=True)
-        file_path = os.path.join(save_dir, f"save_predictions_{symbol}.xlsx")
-
-        row = {
-            "timestamp": fecha, "symbol": symbol, "tipo": tipo, "profit": profit,
-            "precioopen5": o5, "precioclose5": c5, "preciohigh5": h5, "preciolow5": l5, "volume5": v5,
-            "precioopen15": o15, "precioclose15": c15, "preciohigh15": h15, "preciolow15": l15, "volume15": v15,
-            "rsi5": r5, "rsi15": r15,
-            "iStochaMain5": m5, "iStochaSign5": s5, "iStochaMain15": m15, "iStochaSign15": s15
-        }
-
-        if os.path.exists(file_path):
-            df = pd.read_excel(file_path)
-            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-        else:
-            df = pd.DataFrame([row])
-        df.to_excel(file_path, index=False)
-
+        
         return {
             "valor_profit": profit,
             "RESULTADO": tipo
