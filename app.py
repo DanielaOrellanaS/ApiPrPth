@@ -61,6 +61,24 @@ def calcular_operacion(profit, minimo):
         return "BUY" if profit > 0 else "SELL"
     return "NADA"
 
+# ========= Cargar modelos y minmax una vez =========
+MODELS = {}
+MINMAX = {}
+
+for symbol, config in SYMBOL_CONFIG.items():
+    try:
+        model = TradingModel()
+        model.load_state_dict(torch.load(config["model_path"]))
+        model.eval()
+        MODELS[symbol] = model
+
+        with open(config["minmax_path"], "rb") as f:
+            MINMAX[symbol] = pickle.load(f)
+
+        print(f"✅ Cargado {symbol}")
+    except Exception as e:
+        print(f"❌ Error cargando {symbol}: {e}")
+
 # ========= Endpoint principal =========
 @app.get("/predict")
 def predict(
@@ -79,15 +97,11 @@ def predict(
             return {"error": f"Símbolo '{symbol}' no encontrado"}
 
         config = SYMBOL_CONFIG[symbol]
+        model = MODELS.get(symbol)
+        min_max = MINMAX.get(symbol)
 
-        # Cargar modelo
-        model = TradingModel()
-        model.load_state_dict(torch.load(config["model_path"]))
-        model.eval()
-
-        # Cargar min/max
-        with open(config["minmax_path"], "rb") as f:
-            min_max = pickle.load(f)
+        if model is None or min_max is None:
+            return {"error": f"No se pudo cargar modelo o minmax para {symbol}"}
 
         # Procesar fecha
         dt = datetime.fromisoformat(fecha)
@@ -146,3 +160,8 @@ def predict(
 
     except Exception as e:
         return {"error": str(e)}
+
+# ========= Endpoint ping =========
+@app.get("/ping")
+def ping():
+    return {"status": "ok"}
