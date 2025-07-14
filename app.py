@@ -7,6 +7,7 @@ import torch.nn as nn
 import pickle
 import os
 import pandas as pd
+import threading
 
 app = FastAPI()
 
@@ -32,6 +33,12 @@ SYMBOL_CONFIG = {
         "minmax_path": "Trading_Model/min_max_GBPUSD.pkl",
         "min_profit": 0.0005
     }
+}
+
+# Locks por símbolo
+MODEL_LOCKS = {
+    symbol: threading.Lock()
+    for symbol in SYMBOL_CONFIG
 }
 
 # ========= Modelo base =========
@@ -99,6 +106,7 @@ def predict(
         config = SYMBOL_CONFIG[symbol]
         model = MODELS.get(symbol)
         min_max = MINMAX.get(symbol)
+        lock = MODEL_LOCKS[symbol]
 
         if model is None or min_max is None:
             return {"error": f"No se pudo cargar modelo o minmax para {symbol}"}
@@ -129,7 +137,10 @@ def predict(
         ]
 
         input_tensor = torch.tensor(input_data, dtype=torch.float32).unsqueeze(0)
-        raw_output = model(input_tensor).item()
+        with lock: 
+            with torch.no_grad():
+                raw_output = model(input_tensor).item()
+
         profit = denormalize(raw_output, min_max["min_profit"], min_max["max_profit"])
         tipo = calcular_operacion(profit, config["min_profit"])
         
