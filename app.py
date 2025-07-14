@@ -155,4 +155,5 @@ def predict(
 # ========= Endpoint ping =========
 @app.get("/ping")
 def ping():
+    # Comprobacion 
     return {"status": "ok"}
