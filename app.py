@@ -32,6 +32,11 @@ SYMBOL_CONFIG = {
         "model_path": "Trading_Model/trading_model_GBPUSD.pth",
         "minmax_path": "Trading_Model/min_max_GBPUSD.pkl",
         "min_profit": 0.0005
+    },
+    "BTCUSD": {
+        "model_path": "Trading_Model/trading_model_BTCUSD.pth",
+        "minmax_path": "Trading_Model/min_max_BTCUSD.pkl",
+        "min_profit": 600
     }
 }
 
