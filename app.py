@@ -48,6 +48,18 @@ SYMBOL_CONFIG = {
         "minmax_path": "Trading_Model/min_max_US30.pkl",
         "min_profit": 600,
         "input_size": 42
+    },
+    "GER40": {
+        "model_path": "Trading_Model/trading_model_GER40.pth",
+        "minmax_path": "Trading_Model/min_max_GER40.pkl",
+        "min_profit": 600,
+        "input_size": 42
+    },
+    "NAS100": {
+        "model_path": "Trading_Model/trading_model_NAS100.pth",
+        "minmax_path": "Trading_Model/min_max_NAS100.pkl",
+        "min_profit": 600,
+        "input_size": 42
     }
 }
 
