@@ -31,6 +31,12 @@ SYMBOL_CONFIG = {
         "min_profit": 0.0005,
         "input_size": 20
     },
+    "EURCHF": {
+        "model_path": "Trading_Model/trading_model_EURCHF.pth",
+        "minmax_path": "Trading_Model/min_max_EURCHF.pkl",
+        "min_profit": 0.0005,
+        "input_size": 20
+    },
     "GBPUSD": {
         "model_path": "Trading_Model/trading_model_GBPUSD.pth",
         "minmax_path": "Trading_Model/min_max_GBPUSD.pkl",
