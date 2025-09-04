@@ -10,6 +10,8 @@ import pandas as pd
 import threading
 
 app = FastAPI()
+MODELS = {}
+MINMAX = {}
 
 # ========= Configuración por símbolo =========
 SYMBOL_CONFIG = {
@@ -90,6 +92,54 @@ class TradingModel(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+
+# ========= GER40 V2 =========
+
+
+class TradingModelV2(nn.Module):
+    def __init__(self, input_size: int):
+        super().__init__()
+        self.shared = nn.Sequential(
+            nn.Linear(input_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU()
+        )
+        self.regressor = nn.Linear(32, 1)      # salida profit
+        self.classifier = nn.Linear(32, 3)     # salida tipo: IGNORE, BUY, SELL
+
+    def forward(self, x):
+        features = self.shared(x)
+        profit = self.regressor(features)
+        tipo_logits = self.classifier(features)
+        return profit, tipo_logits
+
+SYMBOL_CONFIG["GER40v2"] = {
+    "model_path": "Trading_Model/trading_modelv2_GER40.pth",
+    "minmax_path": "Trading_Model/min_max_v2_GER40.pkl",
+    "min_profit": 10,
+    "input_size": 42
+}
+MODEL_LOCKS["GER40v2"] = threading.Lock()
+
+for symbol, config in SYMBOL_CONFIG.items():
+    try:
+        if symbol == "GER40v2":
+            model = TradingModelV2(input_size=config["input_size"])
+        else:
+            model = TradingModel(input_size=config["input_size"])
+
+        model.load_state_dict(torch.load(config["model_path"]))
+        model.eval()
+        MODELS[symbol] = model
+
+        with open(config["minmax_path"], "rb") as f:
+            MINMAX[symbol] = pickle.load(f)
+
+        print(f"✅ Cargado {symbol}")
+    except Exception as e:
+        print(f"❌ Error cargando {symbol}: {e}")
+
 # ========= Funciones auxiliares =========
 def normalize(val, min_val, max_val):
     return (val - min_val) / (max_val - min_val)
@@ -103,7 +153,7 @@ def calcular_operacion(profit, minimo):
     return "NADA"
 
 # ========= Cargar modelos y minmax una vez =========
-MODELS = {}
+""" MODELS = {}
 MINMAX = {}
 
 for symbol, config in SYMBOL_CONFIG.items():
@@ -119,7 +169,7 @@ for symbol, config in SYMBOL_CONFIG.items():
         print(f"✅ Cargado {symbol}")
     except Exception as e:
         print(f"❌ Error cargando {symbol}: {e}")
-
+ """
 # ========= Endpoint principal =========
 @app.get("/predict")
 def predict(
@@ -132,8 +182,6 @@ def predict(
     r5: float = Query(...), r15: float = Query(...),
     m5: float = Query(...), s5: float = Query(...),
     m15: float = Query(...), s15: float = Query(...),
-
-    # Indicadores adicionales (opcional)
     ema550: float = Query(None), ema5200: float = Query(None),
     ema50_prev: float = Query(None), ema5200_prev: float = Query(None),
     macdLine5: float = Query(None), signalLine5: float = Query(None),
@@ -163,7 +211,7 @@ def predict(
         hora = dt.hour / 23.0
         minuto = dt.minute / 55.0
 
-        # Inputs base (20)
+        # Inputs base
         input_data = [
             dia_semana, hora, minuto,
             normalize(o5, min_max["min_precio5"], min_max["max_precio5"]),
@@ -182,7 +230,7 @@ def predict(
             m15 / 100.0, s15 / 100.0
         ]
 
-        # Si el modelo requiere más de 20 entradas, validar y agregar
+        # Agregar extras si el modelo los requiere
         if config["input_size"] > 20:
             extra = [ema550, ema5200, ema50_prev, ema5200_prev,
                      macdLine5, signalLine5, macdLine_prev5, signalLine_prev5,
@@ -220,19 +268,36 @@ def predict(
             ]
             input_data.extend(extra_data)
 
-        # Predicción
+        # ===== PREDICCIÓN =====
         input_tensor = torch.tensor(input_data, dtype=torch.float32).unsqueeze(0)
         with lock:
             with torch.no_grad():
-                raw_output = model(input_tensor).item()
+                if symbol == "GER40v2":
+                    profit, tipo_logits = model(input_tensor)
 
-        profit = denormalize(raw_output, min_max["min_profit"], min_max["max_profit"])
-        tipo = calcular_operacion(profit, config["min_profit"])
+                    profit_value = float(denormalize(profit.item(), min_max["min_profit"], min_max["max_profit"]))
+                    probs = torch.softmax(tipo_logits, dim=1).numpy().flatten()
+                    clases = ["IGNORE", "BUY", "SELL"]
+                    predicted_class = clases[int(probs.argmax())]
 
-        return {
-            "valor_profit": profit,
-            "RESULTADO": tipo
-        }
+                    return {
+                        "valor_profit": round(profit_value, 6),
+                        "RESULTADO": predicted_class,
+                        "confianza": {
+                            "IGNORE": round(float(probs[0]), 3),
+                            "BUY": round(float(probs[1]), 3),
+                            "SELL": round(float(probs[2]), 3)
+                        }
+                    }
+                else:
+                    raw_output = model(input_tensor).item()
+                    profit_value = float(denormalize(raw_output, min_max["min_profit"], min_max["max_profit"]))
+                    tipo = calcular_operacion(profit_value, config["min_profit"])
+
+                    return {
+                        "valor_profit": round(profit_value, 6),
+                        "RESULTADO": tipo
+                    }
 
     except Exception as e:
         return {"error": str(e)}
