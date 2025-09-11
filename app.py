@@ -114,17 +114,34 @@ class TradingModelV2(nn.Module):
         tipo_logits = self.classifier(features)
         return profit, tipo_logits
 
-SYMBOL_CONFIG["GER40v2"] = {
-    "model_path": "Trading_Model/trading_modelv2_GER40.pth",
-    "minmax_path": "Trading_Model/min_max_v2_GER40.pkl",
+SYMBOL_CONFIG["GER40v4"] = {
+    "model_path": "Trading_Model_v4/trading_modelv4_GER40.pth",
+    "minmax_path": "Trading_Model_v4/min_max_v4_GER40.pkl",
     "min_profit": 10,
     "input_size": 42
 }
-MODEL_LOCKS["GER40v2"] = threading.Lock()
+
+SYMBOL_CONFIG["NAS100v4"] = {
+    "model_path": "Trading_Model_v4/trading_modelv4_NAS100.pth",
+    "minmax_path": "Trading_Model_v4/min_max_v4_NAS100.pkl",
+    "min_profit": 600,
+    "input_size": 42
+}
+
+SYMBOL_CONFIG["US30v4"] = {
+    "model_path": "Trading_Model_v4/trading_modelv4_US30.pth",
+    "minmax_path": "Trading_Model_v4/min_max_v4_US30.pkl",
+    "min_profit": 600,
+    "input_size": 42
+}
+
+MODEL_LOCKS["GER40v4"] = threading.Lock()
+MODEL_LOCKS["NAS100v4"] = threading.Lock()
+MODEL_LOCKS["US30v4"] = threading.Lock()
 
 for symbol, config in SYMBOL_CONFIG.items():
     try:
-        if symbol == "GER40v2":
+        if symbol in ["GER40v4", "NAS100v4", "US30v4"]:
             model = TradingModelV2(input_size=config["input_size"])
         else:
             model = TradingModel(input_size=config["input_size"])
@@ -272,7 +289,7 @@ def predict(
         input_tensor = torch.tensor(input_data, dtype=torch.float32).unsqueeze(0)
         with lock:
             with torch.no_grad():
-                if symbol == "GER40v2":
+                if symbol in ["GER40v4", "NAS100v4", "US30v4"]:
                     profit, tipo_logits = model(input_tensor)
 
                     profit_value = float(denormalize(profit.item(), min_max["min_profit"], min_max["max_profit"]))
